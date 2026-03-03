@@ -31,6 +31,7 @@ _is_cpu_amx_available = cpu_has_amx_support()
 _is_cpu = is_cpu()
 _is_xpu = is_xpu()
 _is_musa = is_musa()
+_force_rope_native = get_bool_env_var("SGLANG_FORCE_ROPE_NATIVE")
 
 if _is_cuda:
     from sglang.jit_kernel.rope import apply_rope_with_cos_sin_cache_inplace
@@ -193,9 +194,8 @@ class RotaryEmbedding(MultiPlatformOp):
         fused_set_kv_buffer_arg: Optional[FusedSetKVBufferArg] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """A PyTorch-native implementation of forward()."""
-        assert (
-            fused_set_kv_buffer_arg is None
-        ), "fused_set_kv_buffer_arg is not supported for native implementation"
+        # Native RoPE ignores fused KV writes and only applies rotary transform.
+        del fused_set_kv_buffer_arg
 
         if offsets is not None:
             positions = positions + offsets
@@ -286,6 +286,8 @@ class RotaryEmbedding(MultiPlatformOp):
         offsets: Optional[torch.Tensor] = None,
         fused_set_kv_buffer_arg: Optional[FusedSetKVBufferArg] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if _force_rope_native:
+            return self.forward_native(positions, query, key, offsets, None)
         if not self.use_fallback_kernel:
             batch_size = positions.size(0)
             q_rope = query.view(batch_size, -1, self.head_size)
